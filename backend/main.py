@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from google import genai
+from gemini_analist import construir_prompt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,8 +23,13 @@ app.add_middleware(
 )
 
 class AnaliseRequest(BaseModel):
-    texto: str = Field(..., min_length=5, max_length=15000)
-    api_key: str = Field(..., min_length=10, max_length=100)
+    api_key: str = Field(..., min_length=10, max_length=150)
+    humor_geral: int = Field(..., ge=1, le=6)
+    humor_pessoas: int = Field(..., ge=1, le=6)
+    humor_atividades: int = Field(..., ge=1, le=6)
+    humor_obrigacoes: int = Field(..., ge=1, le=6)
+    relato_dia: str = Field(..., max_length=15000)
+    relato_sentimentos: str = Field(..., max_length=15000)
 
 @app.get("/")
 @app.head("/")
@@ -35,7 +41,6 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
     client_ip = req.client.host
     logger.info(f"Nova requisicao de analise recebida. IP: {client_ip}")
 
-    texto_limpo = request.texto.strip()
     chave_limpa = request.api_key.strip()
     
     modelos_fallback = [
@@ -46,9 +51,10 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
         "gemini-1.5-flash"
     ]
 
+    prompt = construir_prompt(request)
+
     try:
         client = genai.Client(api_key=chave_limpa)
-        prompt = f"Analise os seguintes dados do dia do usuário. Forneça um resumo identificando o humor predominante, o nível de produtividade e possíveis pontos de atenção ou melhoria. Seja direto e estruturado. Dados do dia: {texto_limpo}"
 
         for modelo in modelos_fallback:
             logger.info(f"Testando execucao com o modelo: {modelo}")
