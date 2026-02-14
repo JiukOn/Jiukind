@@ -23,13 +23,13 @@ app.add_middleware(
 )
 
 class AnaliseRequest(BaseModel):
-    api_key: str = Field(..., min_length=10, max_length=150)
+    api_key: str = Field(..., min_length=10, max_length=150, strip_whitespace=True)
     humor_geral: int = Field(..., ge=1, le=6)
     humor_pessoas: int = Field(..., ge=1, le=6)
     humor_atividades: int = Field(..., ge=1, le=6)
     humor_obrigacoes: int = Field(..., ge=1, le=6)
-    relato_dia: str = Field(..., max_length=15000)
-    relato_sentimentos: str = Field(..., max_length=15000)
+    relato_dia: str = Field(..., min_length=2, max_length=15000, strip_whitespace=True)
+    relato_sentimentos: str = Field(..., min_length=2, max_length=15000, strip_whitespace=True)
 
 @app.get("/")
 @app.head("/")
@@ -41,8 +41,6 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
     client_ip = req.client.host
     logger.info(f"Nova requisicao de analise recebida. IP: {client_ip}")
 
-    chave_limpa = request.api_key.strip()
-    
     modelos_fallback = [
         "gemini-3.5-flash",
         "gemini-3.0-flash",
@@ -51,10 +49,9 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
         "gemini-1.5-flash"
     ]
 
-    prompt = construir_prompt(request)
-
     try:
-        client = genai.Client(api_key=chave_limpa)
+        prompt = construir_prompt(request)
+        client = genai.Client(api_key=request.api_key)
 
         for modelo in modelos_fallback:
             logger.info(f"Testando execucao com o modelo: {modelo}")
@@ -63,6 +60,10 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
                     model=modelo,
                     contents=prompt
                 )
+                
+                if not response.text:
+                    raise ValueError("Resposta vazia retornada pela API do Google.")
+
                 logger.info(f"Analise concluida com sucesso utilizando: {modelo}")
                 
                 return {
@@ -71,11 +72,16 @@ async def analisar_dia(request: AnaliseRequest, req: Request):
                 }
             
             except Exception as model_error:
+                error_msg = str(model_error).lower()
+                if "api key" in error_msg or "unauthorized" in error_msg or "permission" in error_msg or "403" in error_msg or "401" in error_msg:
+                    logger.error("Falha critica de autenticacao. Abortando arvore de fallback.")
+                    raise HTTPException(status_code=401, detail="API Key do Google Gemini invalida, expirada ou sem permissao.")
+                
                 logger.warning(f"Rejeicao no modelo {modelo}: {str(model_error)}")
                 continue
         
-        logger.error("Falha critica: A arvore de fallback esgotou todos os modelos.")
-        raise HTTPException(status_code=500, detail="Nenhum modelo Gemini processou a requisicao. Verifique a validade da sua API Key.")
+        logger.error("Falha critica: A arvore de fallback esgotou todos os modelos disponiveis.")
+        raise HTTPException(status_code=503, detail="Servico indisponivel. Nenhum modelo Gemini processou a requisicao.")
 
     except HTTPException:
         raise
